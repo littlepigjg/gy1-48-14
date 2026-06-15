@@ -1,15 +1,19 @@
 import { TILE_SIZE, TILE_TYPES, SURFACE_Y } from './constants.js';
 
 export const COLLAPSE_CONFIG = {
-  BASE_CHANCE: 0.08,
-  NO_LEFT_SUPPORT_MULTIPLIER: 1.5,
-  NO_RIGHT_SUPPORT_MULTIPLIER: 1.5,
-  BOTH_SUPPORT_MULTIPLIER: 0.3,
-  ONE_SUPPORT_MULTIPLIER: 0.7,
-  EARTHQUAKE_MULTIPLIER: 2.5,
-  CHAIN_REACTION_CHANCE: 0.35,
+  NO_BOTTOM_SUPPORT_BASE_CHANCE: 0.35,
+  SIDE_BOTH_SUPPORT_REDUCTION: 0.35,
+  SIDE_ONE_SUPPORT_REDUCTION: 0.55,
+  SIDE_NONE_SUPPORT_REDUCTION: 0.85,
+  EARTHQUAKE_BASE_CHANCE: 0.6,
+  EARTHQUAKE_SIDE_BOTH_SUPPORT_REDUCTION: 0.55,
+  EARTHQUAKE_SIDE_ONE_SUPPORT_REDUCTION: 0.75,
+  EARTHQUAKE_SIDE_NONE_SUPPORT_REDUCTION: 0.95,
+  EARTHQUAKE_MIN_CHANCE: 0.25,
+  CHAIN_REACTION_CHANCE: 0.4,
   MAX_CHAIN_LEVEL: 4,
-  INSTABILITY_CHANCE_BONUS: 0.4
+  INSTABILITY_CHANCE_BONUS: 0.25,
+  SHOCK_ABSORBER_REDUCTION_PER_LEVEL: 0.12
 };
 
 export class CollapseSystem {
@@ -41,18 +45,35 @@ export class CollapseSystem {
 
     if (!this.canCollapse(x, y, world)) return 0;
 
-    let chance = COLLAPSE_CONFIG.BASE_CHANCE;
+    const support = checkSupportStatus(x, y, world);
 
-    const leftSupport = world.isSolid(x - 1, y + 1);
-    const rightSupport = world.isSolid(x + 1, y + 1);
+    if (support.hasBottomSupport) {
+      return 0;
+    }
 
-    if (leftSupport && rightSupport) {
-      chance *= COLLAPSE_CONFIG.BOTH_SUPPORT_MULTIPLIER;
-    } else if (leftSupport || rightSupport) {
-      chance *= COLLAPSE_CONFIG.ONE_SUPPORT_MULTIPLIER;
+    let chance;
+    if (earthquake) {
+      chance = COLLAPSE_CONFIG.EARTHQUAKE_BASE_CHANCE * earthquakeIntensity;
+      
+      if (support.leftBelow && support.rightBelow) {
+        chance *= COLLAPSE_CONFIG.EARTHQUAKE_SIDE_BOTH_SUPPORT_REDUCTION;
+      } else if (support.leftBelow || support.rightBelow) {
+        chance *= COLLAPSE_CONFIG.EARTHQUAKE_SIDE_ONE_SUPPORT_REDUCTION;
+      } else {
+        chance *= COLLAPSE_CONFIG.EARTHQUAKE_SIDE_NONE_SUPPORT_REDUCTION;
+      }
+      
+      chance = Math.max(COLLAPSE_CONFIG.EARTHQUAKE_MIN_CHANCE, chance);
     } else {
-      chance *= COLLAPSE_CONFIG.NO_LEFT_SUPPORT_MULTIPLIER * 
-                 COLLAPSE_CONFIG.NO_RIGHT_SUPPORT_MULTIPLIER;
+      chance = COLLAPSE_CONFIG.NO_BOTTOM_SUPPORT_BASE_CHANCE;
+      
+      if (support.leftBelow && support.rightBelow) {
+        chance *= COLLAPSE_CONFIG.SIDE_BOTH_SUPPORT_REDUCTION;
+      } else if (support.leftBelow || support.rightBelow) {
+        chance *= COLLAPSE_CONFIG.SIDE_ONE_SUPPORT_REDUCTION;
+      } else {
+        chance *= COLLAPSE_CONFIG.SIDE_NONE_SUPPORT_REDUCTION;
+      }
     }
 
     const tile = world.getTile(x, y);
@@ -60,12 +81,8 @@ export class CollapseSystem {
       chance += COLLAPSE_CONFIG.INSTABILITY_CHANCE_BONUS;
     }
 
-    if (earthquake) {
-      chance *= COLLAPSE_CONFIG.EARTHQUAKE_MULTIPLIER * earthquakeIntensity;
-    }
-
-    const damageReduction = shockAbsorberLevel * 0.15;
-    chance *= (1 - damageReduction);
+    const reduction = shockAbsorberLevel * COLLAPSE_CONFIG.SHOCK_ABSORBER_REDUCTION_PER_LEVEL;
+    chance *= (1 - reduction);
 
     return Math.min(1, Math.max(0, chance));
   }
