@@ -1,4 +1,5 @@
 import { TILE_SIZE, TILE_TYPES, EARTHQUAKE_CONFIG, SURFACE_Y, WORLD_HEIGHT } from './constants.js';
+import { CollapseSystem } from './collapse.js';
 
 export class PoisonGasCloud {
   constructor(x, y, tileX, tileY, index = 0, total = 5) {
@@ -211,6 +212,7 @@ export class EarthquakeManager {
     this.damageTimer = 0;
     this.enemiesEnraged = false;
     this.enrageTimer = 0;
+    this.collapseSystem = new CollapseSystem();
   }
 
   getIntervalForDepth(depth) {
@@ -224,15 +226,6 @@ export class EarthquakeManager {
   getWarningTime(seismicDetectorLevel) {
     return EARTHQUAKE_CONFIG.WARNING_BASE_TIME + 
       seismicDetectorLevel * EARTHQUAKE_CONFIG.WARNING_EXTENDED_TIME / 3;
-  }
-
-  getCollapseChance(depth, shockAbsorberLevel) {
-    const maxDepth = WORLD_HEIGHT - SURFACE_Y;
-    const depthRatio = Math.min(1, depth / maxDepth);
-    const baseChance = EARTHQUAKE_CONFIG.BASE_COLLAPSE_CHANCE + 
-      (EARTHQUAKE_CONFIG.MAX_COLLAPSE_CHANCE - EARTHQUAKE_CONFIG.BASE_COLLAPSE_CHANCE) * depthRatio;
-    const reduction = shockAbsorberLevel * 0.15;
-    return Math.max(0.05, baseChance * (1 - reduction));
   }
 
   getDamage(baseDamage, shockAbsorberLevel) {
@@ -363,85 +356,33 @@ export class EarthquakeManager {
   }
 
   triggerEarthquakeCollapses(world, player, onCollapse) {
-    const depth = Math.max(0, player.tileY - SURFACE_Y);
-    const collapseChance = this.getCollapseChance(depth, player.upgrades.shock_absorber || 0);
-    const checkRadius = 8;
-    const collapses = [];
-
-    for (let dy = -checkRadius; dy <= checkRadius; dy++) {
-      for (let dx = -checkRadius; dx <= checkRadius; dx++) {
-        const checkX = player.tileX + dx;
-        const checkY = player.tileY + dy;
-        
-        if (!world.inBounds(checkX, checkY)) continue;
-        if (checkY < SURFACE_Y + 1) continue;
-        
-        const tile = world.getTile(checkX, checkY);
-        if (tile === TILE_TYPES.EMPTY || tile === TILE_TYPES.CAVE || 
-            tile === TILE_TYPES.BEDROCK || tile === TILE_TYPES.LAVA) continue;
-        
-        const below = world.getTile(checkX, checkY + 1);
-        if (below === TILE_TYPES.EMPTY || below === TILE_TYPES.CAVE) {
-          const supportLeft = world.isSolid(checkX - 1, checkY + 1);
-          const supportRight = world.isSolid(checkX + 1, checkY + 1);
-          
-          if (!supportLeft && !supportRight && Math.random() < collapseChance * this.intensity) {
-            collapses.push({ x: checkX, y: checkY, chainLevel: 0 });
-          }
-        }
+    const collapses = this.collapseSystem.checkArea(
+      player.tileX, player.tileY, 8, world, {
+        earthquake: true,
+        earthquakeIntensity: this.intensity,
+        shockAbsorberLevel: player.upgrades.shock_absorber || 0
       }
-    }
+    );
 
-    const processed = new Set();
     for (const c of collapses) {
-      this.processCollapse(c, world, player, processed, onCollapse, collapseChance);
+      this.collapseSystem.triggerChainReaction(
+        c.x, c.y, world,
+        (x, y, chainLevel) => {
+          if (onCollapse) {
+            onCollapse(x, y, true);
+          }
+        },
+        {
+          maxChainLevel: 4,
+          delayPerLevel: 100,
+          earthquake: true,
+          earthquakeIntensity: this.intensity
+        }
+      );
     }
 
     if (Math.random() < EARTHQUAKE_CONFIG.TERRAIN_CHANGE_CHANCE * this.intensity) {
       this.alterTerrain(world, player);
-    }
-  }
-
-  processCollapse(collapse, world, player, processed, onCollapse, baseChance) {
-    const key = `${collapse.x},${collapse.y}`;
-    if (processed.has(key)) return;
-    processed.add(key);
-
-    if (onCollapse) {
-      onCollapse(collapse.x, collapse.y, true);
-    }
-
-    if (collapse.chainLevel < 3 && Math.random() < EARTHQUAKE_CONFIG.CHAIN_REACTION_CHANCE) {
-      const directions = [
-        { dx: 0, dy: -1 },
-        { dx: -1, dy: 0 },
-        { dx: 1, dy: 0 },
-        { dx: -1, dy: -1 },
-        { dx: 1, dy: -1 }
-      ];
-      
-      for (const dir of directions) {
-        const nx = collapse.x + dir.dx;
-        const ny = collapse.y + dir.dy;
-        
-        if (!world.inBounds(nx, ny)) continue;
-        
-        const tile = world.getTile(nx, ny);
-        if (tile === TILE_TYPES.EMPTY || tile === TILE_TYPES.CAVE || 
-            tile === TILE_TYPES.BEDROCK || tile === TILE_TYPES.LAVA) continue;
-        
-        const below = world.getTile(nx, ny + 1);
-        if (below === TILE_TYPES.EMPTY || below === TILE_TYPES.CAVE) {
-          if (Math.random() < baseChance * 0.5) {
-            setTimeout(() => {
-              this.processCollapse(
-                { x: nx, y: ny, chainLevel: collapse.chainLevel + 1 },
-                world, player, processed, onCollapse, baseChance
-              );
-            }, 100 + Math.random() * 200);
-          }
-        }
-      }
     }
   }
 
@@ -566,5 +507,6 @@ export class EarthquakeManager {
     this.currentWarningTime = 0;
     this.enemiesEnraged = false;
     this.enrageTimer = 0;
+    this.collapseSystem.clear();
   }
 }

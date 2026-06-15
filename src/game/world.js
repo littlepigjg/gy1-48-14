@@ -8,6 +8,7 @@ import {
   TILE_HARDNESS,
   TILE_ORE_MAP
 } from './constants.js';
+import { CollapseSystem, checkSupportStatus } from './collapse.js';
 
 export class World {
   constructor(seed = Date.now()) {
@@ -205,30 +206,35 @@ export class World {
     return tile !== TILE_TYPES.EMPTY && tile !== TILE_TYPES.CAVE;
   }
 
-  checkCollapse(x, y) {
-    const collapses = [];
-    if (!this.inBounds(x, y)) return collapses;
-
-    for (let dy = -2; dy <= 0; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const checkX = x + dx;
-        const checkY = y + dy;
-        if (checkY < SURFACE_Y + 1) continue;
-        
-        const tile = this.getTile(checkX, checkY);
-        if (tile === TILE_TYPES.EMPTY || tile === TILE_TYPES.CAVE) continue;
-        
-        const below = this.getTile(checkX, checkY + 1);
-        if (below === TILE_TYPES.EMPTY || below === TILE_TYPES.CAVE) {
-          const supportLeft = this.isSolid(checkX - 1, checkY + 1);
-          const supportRight = this.isSolid(checkX + 1, checkY + 1);
-          
-          if (!supportLeft && !supportRight && Math.random() < 0.3) {
-            collapses.push({ x: checkX, y: checkY });
-          }
-        }
-      }
+  checkCollapse(x, y, options = {}) {
+    if (!this.collapseSystem) {
+      this.collapseSystem = new CollapseSystem();
     }
-    return collapses;
+    return this.collapseSystem.checkColumn(x, y, this, options);
+  }
+
+  getSupportStatus(x, y) {
+    return checkSupportStatus(x, y, this);
+  }
+
+  canTileCollapse(x, y) {
+    if (!this.collapseSystem) {
+      this.collapseSystem = new CollapseSystem();
+    }
+    return this.collapseSystem.canCollapse(x, y, this);
+  }
+
+  getCollapseChance(x, y, options = {}) {
+    if (!this.collapseSystem) {
+      this.collapseSystem = new CollapseSystem();
+    }
+    return this.collapseSystem.getCollapseChance(x, y, this, options);
+  }
+
+  doCollapse(x, y) {
+    if (!this.collapseSystem) {
+      this.collapseSystem = new CollapseSystem();
+    }
+    return this.collapseSystem.doCollapse(x, y, this);
   }
 }

@@ -7,6 +7,7 @@ import { UIManager } from './ui.js';
 import { ParticleSystem } from './particles.js';
 import { HazardManager, EarthquakeManager } from './hazards.js';
 import { TeleportSystem } from './teleport.js';
+import { CollapseSystem } from './collapse.js';
 
 export class Game {
   constructor(canvas) {
@@ -37,6 +38,7 @@ export class Game {
     this.particles = new ParticleSystem();
     this.hazards = new HazardManager();
     this.earthquake = new EarthquakeManager();
+    this.collapseSystem = new CollapseSystem();
     this.teleport = new TeleportSystem();
     this.collapseTimer = 0;
 
@@ -72,6 +74,7 @@ export class Game {
     this.particles.clear();
     this.hazards.clear();
     this.earthquake.clear();
+    this.collapseSystem.clear();
     this.teleport = new TeleportSystem();
     this.stats = { blocksDug: 0, enemiesKilled: 0 };
     this.collapseTimer = 0;
@@ -456,7 +459,9 @@ export class Game {
     if (this.collapseTimer < 0.5) return;
     this.collapseTimer = 0;
 
-    const collapses = this.world.checkCollapse(this.player.tileX, this.player.tileY);
+    const collapses = this.collapseSystem.checkArea(
+      this.player.tileX, this.player.tileY, 3, this.world
+    );
     for (const c of collapses) {
       const tile = this.world.getTile(c.x, c.y);
       if (tile !== TILE_TYPES.EMPTY && tile !== TILE_TYPES.CAVE) {
@@ -476,12 +481,8 @@ export class Game {
     }
     this.renderer.shake(fromEarthquake ? 2 : 3, fromEarthquake ? 0.3 : 0.5);
 
-    const dx = (x + 0.5) * TILE_SIZE - this.player.x;
-    const dy = (y + 0.5) * TILE_SIZE - this.player.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-
-    if (dist < TILE_SIZE * 1.8) {
-      const damage = dist < TILE_SIZE ? 20 : 10;
+    const damage = this.collapseSystem.getDamageAt(x, y, this.player.x, this.player.y);
+    if (damage > 0) {
       this.player.takeDamage(damage);
     }
 
@@ -492,25 +493,37 @@ export class Game {
       50
     );
 
-    const idx = this.world.getIndex(x, y);
-    this.world.tiles[idx] = TILE_TYPES.EMPTY;
-    this.world.tileHealth[idx] = 0;
-    this.world.dugTiles[idx] = 1;
+    const result = this.collapseSystem.doCollapse(x, y, this.world);
+    if (!result) return;
 
+    const dustColor = this.collapseSystem.getDustColor(tile, TILE_COLORS);
     this.particles.spawnCircle(
       x * TILE_SIZE + TILE_SIZE / 2,
       y * TILE_SIZE + TILE_SIZE / 2,
-      this.getDustColor(tile),
+      dustColor,
       20,
       4
     );
     this.particles.spawn(
       x * TILE_SIZE + TILE_SIZE / 2,
       y * TILE_SIZE + TILE_SIZE / 2,
-      this.getDustColor(tile),
+      dustColor,
       15,
       5
     );
+
+    if (!fromEarthquake) {
+      this.collapseSystem.triggerChainReaction(
+        x, y, this.world,
+        (cx, cy) => {
+          this.hazards.addCollapseWarning(cx, cy);
+          setTimeout(() => {
+            this.triggerCollapse(cx, cy, false);
+          }, 200 + Math.random() * 300);
+        },
+        { maxChainLevel: 2, delayPerLevel: 200 }
+      );
+    }
   }
 
   checkEnemyKills() {
