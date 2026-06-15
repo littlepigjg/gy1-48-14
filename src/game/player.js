@@ -21,7 +21,9 @@ export class Player {
       oxygen_tank: 0,
       cooling: 0,
       armor: 0,
-      weapon: 0
+      weapon: 0,
+      seismic_detector: 0,
+      shock_absorber: 0
     };
 
     this.maxFuel = 100 + this.upgrades.fuel_tank * 40;

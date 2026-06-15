@@ -42,10 +42,18 @@ export class Renderer {
     return { x: sx, y: sy };
   }
 
-  render(dt, world, player, enemies, bullets, particles, baseBuildingX, hazards = null, teleportSystem = null) {
+  render(dt, world, player, enemies, bullets, particles, baseBuildingX, hazards = null, teleportSystem = null, earthquake = null) {
     if (this.shakeTime > 0) {
       this.shakeTime -= dt;
       if (this.shakeTime <= 0) this.shakeStrength = 0;
+    }
+
+    if (earthquake) {
+      const eqShake = earthquake.getShakeIntensity();
+      if (eqShake > this.shakeStrength) {
+        this.shakeStrength = eqShake;
+        this.shakeTime = 0.1;
+      }
     }
 
     this.centerOn(player);
@@ -63,6 +71,10 @@ export class Renderer {
     this.renderPlayer(player, teleportSystem);
     this.renderDarkness(player);
     this.renderBaseArrow(baseBuildingX, player);
+
+    if (earthquake) {
+      earthquake.render(this.ctx, this.canvas.width, this.canvas.height);
+    }
   }
 
   renderSky() {
@@ -431,6 +443,11 @@ export class Renderer {
 
       if (e.damageFlash > 0) {
         this.ctx.globalAlpha = 0.5;
+      }
+
+      if (e.enraged) {
+        this.ctx.shadowColor = '#FF0000';
+        this.ctx.shadowBlur = 15 + Math.sin(Date.now() * 0.01) * 5;
       }
 
       switch (e.type) {

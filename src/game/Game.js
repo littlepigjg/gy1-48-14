@@ -5,7 +5,7 @@ import { EnemyManager } from './enemies.js';
 import { Renderer } from './renderer.js';
 import { UIManager } from './ui.js';
 import { ParticleSystem } from './particles.js';
-import { HazardManager } from './hazards.js';
+import { HazardManager, EarthquakeManager } from './hazards.js';
 import { TeleportSystem } from './teleport.js';
 
 export class Game {
@@ -36,6 +36,7 @@ export class Game {
     this.bullets = [];
     this.particles = new ParticleSystem();
     this.hazards = new HazardManager();
+    this.earthquake = new EarthquakeManager();
     this.teleport = new TeleportSystem();
     this.collapseTimer = 0;
 
@@ -70,6 +71,7 @@ export class Game {
     this.bullets = [];
     this.particles.clear();
     this.hazards.clear();
+    this.earthquake.clear();
     this.teleport = new TeleportSystem();
     this.stats = { blocksDug: 0, enemiesKilled: 0 };
     this.collapseTimer = 0;
@@ -213,7 +215,8 @@ export class Game {
       this.particles,
       this.baseBuildingX,
       this.hazards,
-      this.teleport
+      this.teleport,
+      this.earthquake
     );
 
     this.ui.updateHUD();
@@ -252,8 +255,39 @@ export class Game {
     });
     this.checkHazards(dt);
     this.checkCollapses(dt);
+    this.checkEarthquakes(dt);
     this.checkEnemyKills();
     this.checkLowResources();
+  }
+
+  checkEarthquakes(dt) {
+    this.earthquake.update(
+      dt,
+      this.world,
+      this.player,
+      this.enemies,
+      (x, y, fromEarthquake) => {
+        this.triggerCollapse(x, y, fromEarthquake);
+      },
+      (type, damage) => {
+        if (type === 'earthquake') {
+          this.player.takeDamage(damage);
+          if (Math.random() < 0.3) {
+            this.particles.spawnTrail(this.player.x, this.player.y, '#FF4444');
+          }
+        }
+      },
+      (state, duration) => {
+        if (state === 'warning') {
+          this.ui.showWarning(`📡 地震预警！${duration.toFixed(0)}秒后发生`, 2000, 'text-orange-300');
+        } else if (state === 'active') {
+          this.ui.showWarning('🌋 地震发生！小心坍塌！', 1500, 'text-red-400');
+          this.renderer.shake(5, 1);
+        } else if (state === 'idle') {
+          this.ui.showWarning('✅ 地震已结束', 1500, 'text-green-300');
+        }
+      }
+    );
   }
 
   handleDigging(dt) {
@@ -432,13 +466,15 @@ export class Game {
     }
   }
 
-  triggerCollapse(x, y) {
+  triggerCollapse(x, y, fromEarthquake = false) {
     if (!this.world.inBounds(x, y)) return;
     const tile = this.world.getTile(x, y);
     if (tile === TILE_TYPES.BEDROCK || tile === TILE_TYPES.EMPTY || tile === TILE_TYPES.CAVE) return;
 
-    this.ui.showWarning('💥 塌方！', 800);
-    this.renderer.shake(3, 0.5);
+    if (!fromEarthquake) {
+      this.ui.showWarning('💥 塌方！', 800);
+    }
+    this.renderer.shake(fromEarthquake ? 2 : 3, fromEarthquake ? 0.3 : 0.5);
 
     const dx = (x + 0.5) * TILE_SIZE - this.player.x;
     const dy = (y + 0.5) * TILE_SIZE - this.player.y;

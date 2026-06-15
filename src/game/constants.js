@@ -140,7 +140,39 @@ export const UPGRADE_DEFS = {
     description: '提升攻击力和射速',
     maxLevel: 5,
     costs: [350, 800, 2000, 5000, 12000]
+  },
+  seismic_detector: {
+    name: '地震探测仪',
+    icon: '📡',
+    description: '提前预警地震，等级越高预警时间越长',
+    maxLevel: 3,
+    costs: [500, 1500, 4000]
+  },
+  shock_absorber: {
+    name: '防震护甲',
+    icon: '🏗️',
+    description: '减少地震伤害，降低坍塌概率',
+    maxLevel: 3,
+    costs: [400, 1200, 3500]
   }
+};
+
+export const EARTHQUAKE_CONFIG = {
+  BASE_INTERVAL: 60,
+  MIN_INTERVAL: 15,
+  WARNING_BASE_TIME: 3,
+  WARNING_EXTENDED_TIME: 7,
+  BASE_DURATION: 5,
+  MAX_DURATION: 12,
+  BASE_COLLAPSE_CHANCE: 0.15,
+  MAX_COLLAPSE_CHANCE: 0.45,
+  CHAIN_REACTION_CHANCE: 0.3,
+  TERRAIN_CHANGE_CHANCE: 0.05,
+  BASE_DAMAGE: 3,
+  ENRAGE_DURATION: 15,
+  ENRAGE_DAMAGE_MULTIPLIER: 1.5,
+  ENRAGE_SPEED_MULTIPLIER: 1.5,
+  MIN_DEPTH_FOR_EARTHQUAKE: 5
 };
 
 export const DEPTH_BONUS_MULTIPLIER = 0.003;

@@ -1,4 +1,4 @@
-import { TILE_SIZE, TILE_TYPES } from './constants.js';
+import { TILE_SIZE, TILE_TYPES, EARTHQUAKE_CONFIG, SURFACE_Y, WORLD_HEIGHT } from './constants.js';
 
 export class PoisonGasCloud {
   constructor(x, y, tileX, tileY, index = 0, total = 5) {
@@ -195,5 +195,376 @@ export class HazardManager {
   clear() {
     this.poisonClouds = [];
     this.collapseWarnings = [];
+  }
+}
+
+export class EarthquakeManager {
+  constructor() {
+    this.state = 'idle';
+    this.timer = 0;
+    this.duration = 0;
+    this.intensity = 0;
+    this.warningTime = 0;
+    this.currentWarningTime = 0;
+    this.flashPhase = 0;
+    this.collapseTimer = 0;
+    this.damageTimer = 0;
+    this.enemiesEnraged = false;
+    this.enrageTimer = 0;
+  }
+
+  getIntervalForDepth(depth) {
+    const maxDepth = WORLD_HEIGHT - SURFACE_Y;
+    const depthRatio = Math.min(1, depth / maxDepth);
+    const interval = EARTHQUAKE_CONFIG.BASE_INTERVAL - 
+      (EARTHQUAKE_CONFIG.BASE_INTERVAL - EARTHQUAKE_CONFIG.MIN_INTERVAL) * depthRatio;
+    return interval;
+  }
+
+  getWarningTime(seismicDetectorLevel) {
+    return EARTHQUAKE_CONFIG.WARNING_BASE_TIME + 
+      seismicDetectorLevel * EARTHQUAKE_CONFIG.WARNING_EXTENDED_TIME / 3;
+  }
+
+  getCollapseChance(depth, shockAbsorberLevel) {
+    const maxDepth = WORLD_HEIGHT - SURFACE_Y;
+    const depthRatio = Math.min(1, depth / maxDepth);
+    const baseChance = EARTHQUAKE_CONFIG.BASE_COLLAPSE_CHANCE + 
+      (EARTHQUAKE_CONFIG.MAX_COLLAPSE_CHANCE - EARTHQUAKE_CONFIG.BASE_COLLAPSE_CHANCE) * depthRatio;
+    const reduction = shockAbsorberLevel * 0.15;
+    return Math.max(0.05, baseChance * (1 - reduction));
+  }
+
+  getDamage(baseDamage, shockAbsorberLevel) {
+    const reduction = shockAbsorberLevel * 0.2;
+    return baseDamage * (1 - reduction);
+  }
+
+  getDuration(depth) {
+    const maxDepth = WORLD_HEIGHT - SURFACE_Y;
+    const depthRatio = Math.min(1, depth / maxDepth);
+    return EARTHQUAKE_CONFIG.BASE_DURATION + 
+      (EARTHQUAKE_CONFIG.MAX_DURATION - EARTHQUAKE_CONFIG.BASE_DURATION) * depthRatio;
+  }
+
+  update(dt, world, player, enemies, onCollapse, onDamage, onStateChange) {
+    const depth = Math.max(0, player.tileY - SURFACE_Y);
+    
+    if (depth < EARTHQUAKE_CONFIG.MIN_DEPTH_FOR_EARTHQUAKE) {
+      this.state = 'idle';
+      this.timer = 0;
+      this.enemiesEnraged = false;
+      return;
+    }
+
+    this.flashPhase += dt * 8;
+
+    if (this.enemiesEnraged) {
+      this.enrageTimer -= dt;
+      if (this.enrageTimer <= 0) {
+        this.enemiesEnraged = false;
+        this.calmEnemies(enemies);
+      }
+    }
+
+    switch (this.state) {
+      case 'idle':
+        this.timer += dt;
+        const interval = this.getIntervalForDepth(depth);
+        if (this.timer >= interval) {
+          this.startWarning(player.upgrades.seismic_detector || 0, depth, onStateChange);
+        }
+        break;
+
+      case 'warning':
+        this.timer += dt;
+        this.currentWarningTime = Math.max(0, this.warningTime - this.timer);
+        if (this.timer >= this.warningTime) {
+          this.startEarthquake(depth, enemies, onStateChange);
+        }
+        break;
+
+      case 'active':
+        this.timer += dt;
+        this.intensity = Math.sin(this.timer * 3) * 0.5 + 0.5;
+
+        this.collapseTimer += dt;
+        if (this.collapseTimer >= 0.3) {
+          this.collapseTimer = 0;
+          this.triggerEarthquakeCollapses(world, player, onCollapse);
+        }
+
+        this.damageTimer += dt;
+        if (this.damageTimer >= 1) {
+          this.damageTimer = 0;
+          const damage = this.getDamage(
+            EARTHQUAKE_CONFIG.BASE_DAMAGE * this.intensity,
+            player.upgrades.shock_absorber || 0
+          );
+          if (damage > 0) {
+            onDamage('earthquake', damage);
+          }
+        }
+
+        if (this.timer >= this.duration) {
+          this.endEarthquake(onStateChange);
+        }
+        break;
+    }
+  }
+
+  startWarning(seismicLevel, depth, onStateChange) {
+    this.state = 'warning';
+    this.timer = 0;
+    this.warningTime = this.getWarningTime(seismicLevel);
+    this.currentWarningTime = this.warningTime;
+    this.intensity = 0.3 + (depth / (WORLD_HEIGHT - SURFACE_Y)) * 0.4;
+    if (onStateChange) onStateChange('warning', this.warningTime);
+  }
+
+  startEarthquake(depth, enemies, onStateChange) {
+    this.state = 'active';
+    this.timer = 0;
+    this.duration = this.getDuration(depth);
+    this.collapseTimer = 0;
+    this.damageTimer = 0;
+    this.enemiesEnraged = true;
+    this.enrageTimer = this.duration + EARTHQUAKE_CONFIG.ENRAGE_DURATION;
+    this.angerEnemies(enemies);
+    if (onStateChange) onStateChange('active', this.duration);
+  }
+
+  endEarthquake(onStateChange) {
+    this.state = 'idle';
+    this.timer = 0;
+    this.intensity = 0;
+    this.currentWarningTime = 0;
+    if (onStateChange) onStateChange('idle', 0);
+  }
+
+  angerEnemies(enemies) {
+    for (const e of enemies.enemies) {
+      e.enraged = true;
+      e.originalSpeed = e.speed;
+      e.originalDamage = e.damage;
+      e.speed *= EARTHQUAKE_CONFIG.ENRAGE_SPEED_MULTIPLIER;
+      e.damage *= EARTHQUAKE_CONFIG.ENRAGE_DAMAGE_MULTIPLIER;
+    }
+  }
+
+  calmEnemies(enemies) {
+    for (const e of enemies.enemies) {
+      if (e.enraged) {
+        e.enraged = false;
+        e.speed = e.originalSpeed || e.speed;
+        e.damage = e.originalDamage || e.damage;
+      }
+    }
+  }
+
+  triggerEarthquakeCollapses(world, player, onCollapse) {
+    const depth = Math.max(0, player.tileY - SURFACE_Y);
+    const collapseChance = this.getCollapseChance(depth, player.upgrades.shock_absorber || 0);
+    const checkRadius = 8;
+    const collapses = [];
+
+    for (let dy = -checkRadius; dy <= checkRadius; dy++) {
+      for (let dx = -checkRadius; dx <= checkRadius; dx++) {
+        const checkX = player.tileX + dx;
+        const checkY = player.tileY + dy;
+        
+        if (!world.inBounds(checkX, checkY)) continue;
+        if (checkY < SURFACE_Y + 1) continue;
+        
+        const tile = world.getTile(checkX, checkY);
+        if (tile === TILE_TYPES.EMPTY || tile === TILE_TYPES.CAVE || 
+            tile === TILE_TYPES.BEDROCK || tile === TILE_TYPES.LAVA) continue;
+        
+        const below = world.getTile(checkX, checkY + 1);
+        if (below === TILE_TYPES.EMPTY || below === TILE_TYPES.CAVE) {
+          const supportLeft = world.isSolid(checkX - 1, checkY + 1);
+          const supportRight = world.isSolid(checkX + 1, checkY + 1);
+          
+          if (!supportLeft && !supportRight && Math.random() < collapseChance * this.intensity) {
+            collapses.push({ x: checkX, y: checkY, chainLevel: 0 });
+          }
+        }
+      }
+    }
+
+    const processed = new Set();
+    for (const c of collapses) {
+      this.processCollapse(c, world, player, processed, onCollapse, collapseChance);
+    }
+
+    if (Math.random() < EARTHQUAKE_CONFIG.TERRAIN_CHANGE_CHANCE * this.intensity) {
+      this.alterTerrain(world, player);
+    }
+  }
+
+  processCollapse(collapse, world, player, processed, onCollapse, baseChance) {
+    const key = `${collapse.x},${collapse.y}`;
+    if (processed.has(key)) return;
+    processed.add(key);
+
+    if (onCollapse) {
+      onCollapse(collapse.x, collapse.y, true);
+    }
+
+    if (collapse.chainLevel < 3 && Math.random() < EARTHQUAKE_CONFIG.CHAIN_REACTION_CHANCE) {
+      const directions = [
+        { dx: 0, dy: -1 },
+        { dx: -1, dy: 0 },
+        { dx: 1, dy: 0 },
+        { dx: -1, dy: -1 },
+        { dx: 1, dy: -1 }
+      ];
+      
+      for (const dir of directions) {
+        const nx = collapse.x + dir.dx;
+        const ny = collapse.y + dir.dy;
+        
+        if (!world.inBounds(nx, ny)) continue;
+        
+        const tile = world.getTile(nx, ny);
+        if (tile === TILE_TYPES.EMPTY || tile === TILE_TYPES.CAVE || 
+            tile === TILE_TYPES.BEDROCK || tile === TILE_TYPES.LAVA) continue;
+        
+        const below = world.getTile(nx, ny + 1);
+        if (below === TILE_TYPES.EMPTY || below === TILE_TYPES.CAVE) {
+          if (Math.random() < baseChance * 0.5) {
+            setTimeout(() => {
+              this.processCollapse(
+                { x: nx, y: ny, chainLevel: collapse.chainLevel + 1 },
+                world, player, processed, onCollapse, baseChance
+              );
+            }, 100 + Math.random() * 200);
+          }
+        }
+      }
+    }
+  }
+
+  alterTerrain(world, player) {
+    const radius = 5;
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        const tx = player.tileX + dx;
+        const ty = player.tileY + dy;
+        
+        if (!world.inBounds(tx, ty)) continue;
+        if (ty < SURFACE_Y + 1) continue;
+        
+        const tile = world.getTile(tx, ty);
+        if (tile === TILE_TYPES.BEDROCK || tile === TILE_TYPES.LAVA) continue;
+        
+        if (tile !== TILE_TYPES.EMPTY && tile !== TILE_TYPES.CAVE) {
+          if (Math.random() < 0.02) {
+            world.setTile(tx, ty, TILE_TYPES.INSTABILITY);
+          }
+        } else if ((tile === TILE_TYPES.EMPTY || tile === TILE_TYPES.CAVE) && Math.random() < 0.01) {
+          world.setTile(tx, ty, TILE_TYPES.STONE);
+        }
+      }
+    }
+  }
+
+  getFlashAlpha() {
+    if (this.state === 'warning') {
+      const pulseSpeed = 3 + (1 - this.currentWarningTime / this.warningTime) * 5;
+      return (Math.sin(this.flashPhase * pulseSpeed) * 0.5 + 0.5) * 0.4;
+    }
+    if (this.state === 'active') {
+      return (Math.sin(this.flashPhase * 10) * 0.5 + 0.5) * 0.3 * this.intensity;
+    }
+    return 0;
+  }
+
+  isWarning() {
+    return this.state === 'warning';
+  }
+
+  isActive() {
+    return this.state === 'active';
+  }
+
+  getShakeIntensity() {
+    if (this.state === 'active') {
+      return this.intensity * 4;
+    }
+    if (this.state === 'warning') {
+      return (1 - this.currentWarningTime / this.warningTime) * 1.5;
+    }
+    return 0;
+  }
+
+  render(ctx, screenWidth, screenHeight) {
+    const alpha = this.getFlashAlpha();
+    if (alpha > 0) {
+      ctx.fillStyle = `rgba(255, 0, 0, ${alpha})`;
+      ctx.fillRect(0, 0, screenWidth, screenHeight);
+    }
+
+    if (this.state === 'warning' || this.state === 'active') {
+      const centerX = screenWidth / 2;
+      const centerY = 80;
+      
+      ctx.save();
+      ctx.shadowColor = '#FF0000';
+      ctx.shadowBlur = 20;
+      
+      ctx.fillStyle = '#FF0000';
+      ctx.font = 'bold 28px sans-serif';
+      ctx.textAlign = 'center';
+      
+      let text = '';
+      if (this.state === 'warning') {
+        text = `⚠️ 地震预警！${this.currentWarningTime.toFixed(1)}秒后发生 ⚠️`;
+      } else {
+        text = `🌋 地震中！ ${Math.max(0, this.duration - this.timer).toFixed(1)}秒 🌋`;
+      }
+      
+      const pulse = 1 + Math.sin(this.flashPhase * 3) * 0.1;
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.scale(pulse, pulse);
+      ctx.fillText(text, 0, 0);
+      ctx.restore();
+      
+      ctx.restore();
+
+      const barWidth = 300;
+      const barHeight = 8;
+      const barX = centerX - barWidth / 2;
+      const barY = centerY + 20;
+      
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      ctx.fillRect(barX, barY, barWidth, barHeight);
+      
+      let progress;
+      if (this.state === 'warning') {
+        progress = 1 - this.currentWarningTime / this.warningTime;
+      } else {
+        progress = this.timer / this.duration;
+      }
+      
+      const gradient = ctx.createLinearGradient(barX, 0, barX + barWidth, 0);
+      gradient.addColorStop(0, '#FF6600');
+      gradient.addColorStop(0.5, '#FF0000');
+      gradient.addColorStop(1, '#FF6600');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(barX, barY, barWidth * progress, barHeight);
+    }
+  }
+
+  clear() {
+    this.state = 'idle';
+    this.timer = 0;
+    this.duration = 0;
+    this.intensity = 0;
+    this.warningTime = 0;
+    this.currentWarningTime = 0;
+    this.enemiesEnraged = false;
+    this.enrageTimer = 0;
   }
 }
